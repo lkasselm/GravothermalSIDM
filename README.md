@@ -5,7 +5,7 @@ GravothermalSIDM solves a set of gravothermal fluid equations to obtain the evol
 
 Author: [Kimberly Boddy](https://sites.cns.utexas.edu/kboddy)
 
-Contributors: Hiroya Nishikawa, [Sophia Gad-Nasr](https://github.com/SophiaNasr?tab=repositories), Laura Sagunski
+Contributors: Hiroya Nishikawa, [Sophia Gad-Nasr](https://github.com/SophiaNasr?tab=repositories), [Laura Sagunski](https://dmgw.space/)
 
 [![GPLv3 license](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html#license-text)
 [![Generic badge](https://img.shields.io/badge/arXiv-2204.06568-a30f0f.svg)](https://arxiv.org/abs/2204.06568)
@@ -26,7 +26,9 @@ Options for initial halo profiles:
 Options for the SIDM cross section:
 * constant (velocity independent)
 * power-law velocity dependence
-* Yukawa scattering, Yukawa scattering via only t-channel
+* Yukawa scattering (Born approximation)
+  * t- and u-channel
+  * t-channel only
 
 Getting started
 ---------------
@@ -58,3 +60,5 @@ If you use this software, please cite the following in your publications:
 * [On the Late-Time Evolution of Velocity-Dependent Self-Interacting Dark Matter Halos (arXiv: 2312.09296)](https://arxiv.org/abs/2312.09296)
 
 Additionally, feel free to cite [Accelerated core collapse in tidally stripped self-interacting dark matter halos (arXiv: 1901.00499)](https://arxiv.org/abs/1901.00499), which developed the code on which GravothermalSIDM is based.
+
+The numerical implementation of the gravothermal evolution is based on the detailed description provided in [Jason Pollack's senior undergraduate thesis](http://arks.princeton.edu/ark:/88435/dsp01t435gg18w).
