@@ -188,6 +188,9 @@ class Halo:
             'profile': 'NFW',
             'r_s': 2.586, # [kpc]
             'rho_s': 0.0194, # [M_sun/pc^3]
+            #'rho_b': 0.35, # baryon scale density in units of [M_sun/pc^3]
+            'M_b': 1e9, # total baryon mass in units of [M_sun]
+            'r_b': 0.77, # initial baryon scale radius in units of [kpc]
             'a': 4./np.sqrt(np.pi),
             'b': 25.*np.sqrt(np.pi)/32.,
             'C': 0.753,
@@ -258,6 +261,13 @@ class Halo:
         self.scale_t   = 1./np.sqrt(4.*np.pi*self.scale_rho * ct.G) # dynamical time scale
         self.scale_L   = ct.G * self.scale_m**2 / (self.scale_r * self.scale_t) # luminosity scale
         self.scale_sigma_m = 1./(self.scale_r * self.scale_rho) # cross section per mass scale
+
+        # add correct units to baryon quantities:
+        self.r_b = self.r_b * ut.kpc 
+        #self.rho_b = self.rho_b * ut.M_sun/ut.pc**3
+        self.M_b = self.M_b * ut.M_sun
+
+        self.step = 0
 
         # convert dimensionful quantities to be dimensionless
         self.sigma_m = (self.sigma_m_with_units*ut.cm**2/ut.g).to_value(self.scale_sigma_m)
@@ -478,6 +488,33 @@ class Halo:
         else:
             raise IOError('Profile {} is not recognized for density calculation'.format(self.profile))
         return rho
+    
+    # If the baryon profile is placed in the halo immediately at t=0, this causes a problem, because the
+    # hydrostatic adjustment procedure relies on the assumption that the adjustment in each timestep 
+    # is small. But if the total mass is suddenly increased, this is no longer true.
+    # This can lead to negative radii. For this reason, the baryon mass is grown linearly in the first few timesteps,
+    # such that the DM profile can adapt properly. 
+
+    def get_baryon_mass(self, r):
+        t_grow = 1e-4 # time it takes for baryon mass to grow fully (in dimensionless time).
+        # input: dimensionless radius
+        # output: dimensionless baryon mass
+        x = (r * self.scale_r / self.r_b).to_value(ut.dimensionless_unscaled)  # dimensionful radius / baryon scale radius
+        if self.t < t_grow:
+            M = self.M_b * self.t / t_grow
+        else:
+            M = self.M_b
+        M =  (M / self.scale_m).to_value(ut.dimensionless_unscaled)
+        #print('total baryon mass: ', M)
+        M_arr = M * x**2/((1+x)**2)
+        return M_arr 
+
+    #def dens_b(self, r):
+        # input: dimensionless radius
+        # output: dimensionless baryon density
+    #    x = r * self.scale_r / self.r_b  # dimensionful radius / baryon scale radius
+    #    rho_b = (self.M_b/(2*np.pi*self.r_b**3)) * (x * (1+x)**3)**(-1)
+    #    return rho_b / self.scale_rho
 
     def get_initial_pressure(self,x,numeric=False,xmax=None):
         """
@@ -569,7 +606,7 @@ class Halo:
         # effective thermal conductivity, Keff = (2/3) \kappa m_{DM}
         # heat flux equation: L/(4\pi r^2) = -kappa \frac{\partial T}{\partial r}
         #                                  = - Keff \frac{\partial u}{\partial r}
-        self.Kinv_smfp = self.sigma_m * self.F_elastic_smfp(self.v/self.w) / (self.b * self.v)
+        self.Kinv_smfp = self.sigma_m * self.F_elastic_smfp(self.v/self.w) / (self.b * self.v) # CHANGE THIS TO INCLUDE BARYONS
         self.Kinv_lmfp = 1. / (self.a * self.C * self.v * self.p * self.sigma_m * self.F_elastic_lmfp(self.v/self.w))
         Keff = 1./(self.Kinv_smfp + self.Kinv_lmfp)
 
@@ -580,7 +617,6 @@ class Halo:
 
         # Knudsen number
         self.Kn = 1. / (np.sqrt(self.p) * self.sigma_m)
-
         return
 
     def get_timestep(self):
@@ -589,7 +625,9 @@ class Halo:
         """
         delta_t1 = min(abs(self.u[0]/(self.L[0]/self.m[0])),
                        min(abs(self.u[1:] / ((self.L[1:]-self.L[:-1])/(self.m[1:]-self.m[:-1])))))
-        delta_t2 = min(1. / (self.rho * self.v) )
+        #total_dens = self.rho + self.dens_b(self.r) # use total (DM + baryon) density to determine timestep
+        total_dens = self.rho
+        delta_t2 = min(1. / (total_dens * self.v) )
 
         # determine minimum time step
         if self.flag_timestep_use_relaxation and self.flag_timestep_use_energy:
@@ -624,6 +662,8 @@ class Halo:
         self.p += delta_pc
         self.u += self.delta_uc
 
+        if np.nanmax( np.abs( self.delta_uc/self.u ) ) > 1e-3:
+            print('Warning: Relative change of u within timestep is ',np.amax( np.abs( self.delta_uc/self.u ) ),'. Consider choosing a smaller timestep.')
         # update the current dimensionless time
         self.t_before = self.t
         self.t += delta_t
@@ -635,6 +675,9 @@ class Halo:
         Perform one hydrostatic adjustment process. Adiabaticity is satisified
         in the hydrostatic process after each conduction step. The tridiagonal
         matrix is derived by keeping the central and outermost shells fixed.
+
+        ~ This function need to be updated if baryons are incorporated.
+        We need one hydrostatic adjustment step for the DM and one for the baryons. ~ 
         """
         # update the counter
         self.n_adjustment += 1
@@ -642,6 +685,7 @@ class Halo:
         self.set_hydrostatic_coefficients()
 
         delta_r = TDMA_solver(self.a_arr,self.b_arr,self.c_arr,self.d_arr,self.n_shells-1)
+        #print('delta_r ', delta_r)
         self.delta_r[:-1] = delta_r
         self.delta_r[-1]  = 0
 
@@ -660,6 +704,9 @@ class Halo:
         self.r += self.delta_r
         self.rho += self.delta_rho
         self.p += self.delta_ph
+
+        if np.any( self.r < 0 ):
+            raise ValueError('Negative radius after hydrostatic adjustment')
 
         return
 
@@ -682,13 +729,16 @@ class Halo:
             for idx in range(self.n_adjustment_fixed):
                 self.hydrostatic_adjustment_step()
         else:
+            counter = 0
             self.hydrostatic_adjustment_step()
             # adjust until convergence is met
             while max(abs(self.delta_r/self.r)) > self.r_epsilon:
                 if self.n_adjustment == self.n_adjustment_max:
                     # break if max adjustments is reached
+                    #print('number of hydrostatic adjustment steps: ', counter)
                     break
                 self.hydrostatic_adjustment_step()
+                counter += 1
 
         self.update_derived_parameters()
         return
@@ -700,7 +750,7 @@ class Halo:
         """
         # fill extended r and m arrays
         self.r_ext[1:] = self.r
-        self.m_ext[1:] = self.m
+        self.m_ext[1:] = self.m + self.get_baryon_mass(self.r) # total enclosed mass (DM + baryons)
         self.r_ext[0] = 0
         self.m_ext[0] = 0
 
@@ -740,7 +790,7 @@ class Halo:
                     save_frequency_rate = None,
                     save_frequency_timing = None,
                     save_frequency_density = None,
-                    t_epsilon=1.e-4,r_epsilon=1.e-14):
+                    t_epsilon=9.e-4,r_epsilon=1.e-14):
         """
         Run the halo evolution.
 
@@ -812,6 +862,9 @@ class Halo:
 
         # evolve the halo
         while 1:
+            self.step += 1
+            if self.step % 1000 == 0: # print out current simulation time every 1000 steps
+                print(f'\rcurrent time: '+str( np.round( (self.t * self.scale_t).to(ut.Gyr),5 ) )+' , current timestep: '+str( ((self.t - self.t_before) * self.scale_t).to(ut.Gyr) ) +'          ', end="", flush=True)
             # conduct heat
             try:
                 self.conduct_heat()
